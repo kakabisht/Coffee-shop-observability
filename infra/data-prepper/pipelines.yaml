@@ -1,0 +1,13 @@
+coffee-shop-logs:
+  workers: 2
+  delay: 100
+  source:
+    otlp:
+      ssl: false
+      port: 21890
+      output_format: otel
+  sink:
+    - opensearch:
+        hosts:
+          - http://opensearch:9200
+        index: coffee-shop-logs-%{yyyy.MM.dd}

@@ -1,0 +1,1 @@
+"""Individual coffee shop services."""

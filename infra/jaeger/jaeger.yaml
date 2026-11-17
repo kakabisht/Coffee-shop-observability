@@ -1,0 +1,36 @@
+service:
+  extensions: [jaeger_storage, jaeger_query]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [jaeger_storage_exporter]
+
+extensions:
+  jaeger_query:
+    storage:
+      traces: coffee_traces
+
+  jaeger_storage:
+    backends:
+      coffee_traces:
+        opensearch:
+          server_urls:
+            - http://opensearch:9200
+          indices:
+            index_prefix: coffee-jaeger
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+
+exporters:
+  jaeger_storage_exporter:
+    trace_storage: coffee_traces

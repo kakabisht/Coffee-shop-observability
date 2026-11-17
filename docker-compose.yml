@@ -1,0 +1,194 @@
+name: coffee-shop-observability
+
+services:
+  postgres:
+    image: postgres:17.6
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-coffee}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-coffee-local-only}
+      POSTGRES_DB: ${POSTGRES_DB:-coffee_shop}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  order-api:
+    image: coffee-shop-observability-app:local
+    build: .
+    command: ["uvicorn", "coffee_shop.services.order:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment: &app-environment
+      DATABASE_URL: postgresql://${POSTGRES_USER:-coffee}:${POSTGRES_PASSWORD:-coffee-local-only}@postgres:5432/${POSTGRES_DB:-coffee_shop}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      DEPLOYMENT_ENVIRONMENT: local
+      ENABLE_DEMO_SCENARIOS: ${ENABLE_DEMO_SCENARIOS:-true}
+      PYROSCOPE_ENABLED: "true"
+      PYROSCOPE_SERVER_ADDRESS: http://pyroscope:4040
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+      pyroscope:
+        condition: service_started
+      inventory:
+        condition: service_healthy
+      barista:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  inventory:
+    image: coffee-shop-observability-app:local
+    build: .
+    command: ["uvicorn", "coffee_shop.services.inventory:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment: *app-environment
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+      pyroscope:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  barista:
+    image: coffee-shop-observability-app:local
+    build: .
+    command: ["uvicorn", "coffee_shop.services.barista:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      <<: *app-environment
+      SLOW_CPU_ITERATIONS: "8000000"
+    ports:
+      - "8002:8000"
+    depends_on:
+      otel-collector:
+        condition: service_started
+      pyroscope:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  opensearch:
+    image: opensearchproject/opensearch:2.19.6
+    environment:
+      - discovery.type=single-node
+      - DISABLE_SECURITY_PLUGIN=true
+      - bootstrap.memory_lock=true
+      - OPENSEARCH_JAVA_OPTS=${OPENSEARCH_JAVA_OPTS:--Xms768m -Xmx768m}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "9200:9200"
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  jaeger:
+    image: jaegertracing/jaeger:2.23.0
+    command: ["--config", "/etc/jaeger/jaeger.yaml"]
+    volumes:
+      - ./infra/jaeger/jaeger.yaml:/etc/jaeger/jaeger.yaml:ro
+    ports:
+      - "16686:16686"
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    restart: unless-stopped
+
+  data-prepper:
+    image: opensearchproject/data-prepper:2.16.0
+    volumes:
+      - ./infra/data-prepper/pipelines.yaml:/usr/share/data-prepper/pipelines/pipelines.yaml:ro
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.147.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./infra/otel-collector/collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "9464:9464"
+      - "13133:13133"
+    depends_on:
+      jaeger:
+        condition: service_started
+      data-prepper:
+        condition: service_started
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.16.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      otel-collector:
+        condition: service_started
+    restart: unless-stopped
+
+  pyroscope:
+    image: grafana/pyroscope:2.3.1
+    ports:
+      - "4040:4040"
+    volumes:
+      - pyroscope-data:/var/lib/pyroscope
+    restart: unless-stopped
+
+  perses:
+    image: persesdev/perses:v0.55.0
+    ports:
+      - "8080:8080"
+    depends_on:
+      - prometheus
+      - jaeger
+      - opensearch
+      - pyroscope
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  opensearch-data:
+  prometheus-data:
+  pyroscope-data:
