@@ -1,0 +1,31 @@
+services:
+  order-api:
+    environment:
+      OTEL_SERVICE_NAME: order-api
+
+  inventory:
+    environment:
+      OTEL_SERVICE_NAME: inventory-service
+
+  barista:
+    environment:
+      OTEL_SERVICE_NAME: barista-service
+
+  otel-ebpf-profiler:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-ebpf-profiler:0.160.0
+    command:
+      - --config=/etc/ebpf-profiler-config.yaml
+      - --feature-gates=service.profilesSupport
+    privileged: true
+    pid: "host"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./infra/otel-ebpf-profiler/dash0-profiles.yaml:/etc/ebpf-profiler-config.yaml:ro
+      - /sys/kernel/debug:/sys/kernel/debug
+      - /sys/kernel/tracing:/sys/kernel/tracing
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+      - /proc:/proc:ro
+    depends_on:
+      otel-collector:
+        condition: service_started
+    restart: unless-stopped

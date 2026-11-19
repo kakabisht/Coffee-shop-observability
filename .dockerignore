@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+.secrets/
+dash0-secrets.*
+*.backup.*.json
+*.pprof
+.git/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+docs/
+tests/
+scripts/

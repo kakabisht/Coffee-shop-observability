@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-coffee-local-only}
       POSTGRES_DB: ${POSTGRES_DB:-coffee_shop}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -29,7 +29,7 @@ services:
       PYROSCOPE_ENABLED: "true"
       PYROSCOPE_SERVER_ADDRESS: http://pyroscope:4040
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -54,7 +54,7 @@ services:
     command: ["uvicorn", "coffee_shop.services.inventory:app", "--host", "0.0.0.0", "--port", "8000"]
     environment: *app-environment
     ports:
-      - "8001:8000"
+      - "127.0.0.1:8001:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,7 +77,7 @@ services:
       <<: *app-environment
       SLOW_CPU_ITERATIONS: "8000000"
     ports:
-      - "8002:8000"
+      - "127.0.0.1:8002:8000"
     depends_on:
       otel-collector:
         condition: service_started
@@ -105,7 +105,7 @@ services:
         soft: 65536
         hard: 65536
     ports:
-      - "9200:9200"
+      - "127.0.0.1:9200:9200"
     volumes:
       - opensearch-data:/usr/share/opensearch/data
     healthcheck:
@@ -120,7 +120,7 @@ services:
     volumes:
       - ./infra/jaeger/jaeger.yaml:/etc/jaeger/jaeger.yaml:ro
     ports:
-      - "16686:16686"
+      - "127.0.0.1:16686:16686"
     depends_on:
       opensearch:
         condition: service_healthy
@@ -141,10 +141,10 @@ services:
     volumes:
       - ./infra/otel-collector/collector.yaml:/etc/otelcol-contrib/config.yaml:ro
     ports:
-      - "4317:4317"
-      - "4318:4318"
-      - "9464:9464"
-      - "13133:13133"
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:9464:9464"
+      - "127.0.0.1:13133:13133"
     depends_on:
       jaeger:
         condition: service_started
@@ -162,7 +162,7 @@ services:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     depends_on:
       otel-collector:
         condition: service_started
@@ -171,7 +171,7 @@ services:
   pyroscope:
     image: grafana/pyroscope:2.3.1
     ports:
-      - "4040:4040"
+      - "127.0.0.1:4040:4040"
     volumes:
       - pyroscope-data:/var/lib/pyroscope
     restart: unless-stopped
@@ -179,7 +179,7 @@ services:
   perses:
     image: persesdev/perses:v0.55.0
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       - prometheus
       - jaeger

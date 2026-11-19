@@ -1,0 +1,14 @@
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.160.0
+    command:
+      - --config=/etc/otelcol-contrib/config.yaml
+      - --feature-gates=service.profilesSupport
+    environment:
+      DASH0_OTLP_GRPC_ENDPOINT: ${DASH0_OTLP_GRPC_ENDPOINT:?Set DASH0_OTLP_GRPC_ENDPOINT to your Dash0 OTLP/gRPC endpoint}
+      DASH0_AUTH_TOKEN: ${DASH0_AUTH_TOKEN:?Set DASH0_AUTH_TOKEN to your Dash0 auth token}
+      DASH0_DATASET: ${DASH0_DATASET:-default}
+    volumes:
+      - ./infra/otel-collector/collector-dash0.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "127.0.0.1:4041:4041"

@@ -1,6 +1,15 @@
 .env
+.env.*
+!.env.example
+.secrets/
+dash0-secrets.*
+*.backup.*.json
+# Local dashboard drafts; the configure script is incomplete.
+configure-perses-dashboard.sh
+test-dashboard-telemetry.sh
 .venv/
 __pycache__/
 *.py[cod]
+*.pprof
 .pytest_cache/
 .DS_Store

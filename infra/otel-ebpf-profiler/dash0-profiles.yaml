@@ -1,0 +1,26 @@
+receivers:
+  profiling:
+    samples_per_second: 19
+    include_env_vars: "OTEL_SERVICE_NAME"
+
+processors:
+  transform/service_name:
+    error_mode: ignore
+    profile_statements:
+      - context: resource
+        statements:
+          - set(attributes["service.name"], attributes["process.environment_variable.OTEL_SERVICE_NAME"]) where attributes["process.environment_variable.OTEL_SERVICE_NAME"] != nil
+          - delete_key(attributes, "process.environment_variable.OTEL_SERVICE_NAME")
+
+exporters:
+  otlp_grpc/collector:
+    endpoint: otel-collector:4317
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    profiles:
+      receivers: [profiling]
+      processors: [transform/service_name]
+      exporters: [otlp_grpc/collector]

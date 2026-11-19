@@ -4,7 +4,7 @@ A small, interactive coffee shop application that demonstrates how **logs, metri
 
 Customers can choose from eight coffees, place an order, and select **Where is my coffee?** to follow its progress through the shop. Behind the scenes, three FastAPI services process the order and emit telemetry to an open-source observability stack.
 
-The application uses vendor-neutral OpenTelemetry instrumentation for traces, metrics, and logs. The Python Pyroscope SDK sends profiles directly to Pyroscope. Later, we can point the same application telemetry at Dash0 by changing the Collector exporters and replacing the profiling adapter with an OTLP-native profiler.
+The application uses vendor-neutral OpenTelemetry instrumentation for traces, metrics, and logs. The Python Pyroscope SDK sends profiles directly to Pyroscope. An optional Collector configuration also sends traces, metrics, and logs to Dash0; selected Pyroscope profiles can be exported as pprof and imported into Dash0 through the Collector.
 
 ## What this demonstrates
 
@@ -45,6 +45,18 @@ The screenshots below show one local run of the coffee shop demo and its telemet
 ### Dashboard in Perses
 
 ![Perses dashboard for coffee shop observability](docs/images/coffee-shop-Perses.png)
+
+### Dash0 comparison
+
+The same application telemetry can be explored in Dash0. These screenshots show the service inventory, service map, and dashboard. The profiling screenshot is an unfiltered Dash0 view; it does not identify a coffee shop service and should not be used as evidence of a Barista profile.
+
+![Coffee shop services in Dash0](docs/images/dash0-services-coffeeshop.png)
+
+![Coffee shop service map in Dash0](docs/images/dash0-serviceMap-coffeeshop.png)
+
+![Coffee shop dashboard in Dash0](docs/images/dash0-dashboard-coffeeshop.png)
+
+![Unfiltered Dash0 profiling explorer](docs/images/dash0-profile-coffeeshop.png)
 
 ## Customer experience
 
@@ -182,7 +194,7 @@ This SDK-based setup is portable across macOS and Linux. The eBPF profiler is a 
 ### Start the application
 
 ```bash
-cp .env.example .env
+cp .env.example .env  # First run only; do not overwrite an existing .env
 docker compose up --build -d
 ```
 
@@ -326,6 +338,94 @@ Create Perses datasources using these container-network URLs:
 
 For local experimentation, direct datasource URLs are convenient. For a shared deployment, configure authentication and reverse-proxy access rather than exposing backend services directly to browsers.
 
+## Optional Dash0 export
+
+The default stack keeps telemetry local. For an article comparison, `docker-compose.dash0.yml` fans out OTLP traces, metrics, and logs to Dash0 and the local backends. It also accepts OTLP profiles and forwards them to Dash0.
+
+On a Linux Docker host, add `docker-compose.dash0-profiles.yml` to collect CPU profiles from the application processes with the OpenTelemetry eBPF profiler. The app's Pyroscope SDK continues to send its own CPU and memory profiles to Pyroscope; these are separate profile streams. eBPF profiling requires privileged Linux host access and is not supported by this setup on macOS Docker Desktop.
+
+On macOS, export a merged profile already stored in Pyroscope. The Pyroscope UI in this stack may show individual profile IDs without an export action; use Grafana's `profilecli` to select a service and time range instead:
+
+```bash
+brew install pyroscope-io/brew/profilecli
+PROFILECLI_URL=http://localhost:4040 profilecli query series --from="now-1h" --to="now"
+PROFILECLI_URL=http://localhost:4040 profilecli query profile \
+  --profile-type=process_cpu:cpu:nanoseconds:cpu:nanoseconds \
+  --query='{service_name="coffee-shop.barista-service"}' \
+  --from="now-1h" --to="now" \
+  --output=pprof=./barista-cpu.pprof
+```
+
+If the series output shows a different `service_name`, use that value in `--query`. The command merges all matching profiles in the selected hour; no profile ID is needed. With the Dash0 override running, import the file through the Collector's localhost-only pprof receiver:
+
+```bash
+curl --fail-with-body --show-error \
+  -X POST http://127.0.0.1:4041/v1/pprof \
+  -H 'Content-Type: application/octet-stream' \
+  -H 'Content-Encoding: gzip' \
+  --data-binary @./barista-cpu.pprof
+```
+
+The command assumes the exported `.pprof` file is gzip-encoded; omit `Content-Encoding: gzip` if it is not. The pprof receiver converts the file to OTLP profiles and the Collector exports it to Dash0. This is a one-time import of the selected profile window, not continuous profiling. Check Dash0's **Telemetry > Profiling** view in the configured dataset. If the import fails, check `otel-collector` logs; do not send the `.pprof` file directly to Dash0's OTLP endpoint.
+
+On first setup, create `.env` from the example. If `.env` already exists, edit it in place so your credentials are not overwritten:
+
+```bash
+cp .env.example .env  # First run only
+```
+
+```dotenv
+DASH0_OTLP_GRPC_ENDPOINT=YOUR_DASH0_OTLP_GRPC_ENDPOINT
+DASH0_AUTH_TOKEN=YOUR_DASH0_AUTH_TOKEN
+DASH0_DATASET=default
+```
+
+Start the stack with the optional Dash0 override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dash0.yml up --build -d --wait --wait-timeout 300
+```
+
+To send CPU profiles as well, run the stack on a Linux host:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dash0.yml -f docker-compose.dash0-profiles.yml up --build -d --wait --wait-timeout 300
+```
+
+Generate the same scenarios used in the local screenshots:
+
+```bash
+bash scripts/validate_scenarios.sh
+python3 scripts/validate_e2e.py
+for i in {1..5}; do bash scripts/generate_orders.sh; done
+```
+
+Wait 60-90 seconds for SDK and Collector batches to flush, then compare:
+
+- Jaeger trace search vs. Dash0 tracing for `service.name=order-api`.
+- Prometheus coffee metrics vs. Dash0 metrics for names beginning with `coffee.` or `coffee_`.
+- OpenSearch trace-correlated logs vs. Dash0 logs filtered by `service.name` and `trace_id`/trace context.
+- On Linux, look in Dash0's Profiling view for On-CPU profiles from `order-api`, `inventory-service`, and `barista-service`. Run repeated `slow_cpu` orders to produce a useful sample window.
+
+Check Collector health and logs if data is missing:
+
+```bash
+curl -sS http://localhost:13133/
+docker compose -f docker-compose.yml -f docker-compose.dash0.yml logs --since=10m otel-collector
+```
+
+On Linux, also check the profiler container if profiles are missing:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dash0.yml -f docker-compose.dash0-profiles.yml logs --since=10m otel-ebpf-profiler
+```
+
+Stop the Dash0 comparison stack with the same Compose files:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dash0.yml down
+```
+
 ## Docker end-to-end acceptance
 
 Run the automated workflow and telemetry checks after starting Docker:
@@ -335,7 +435,7 @@ docker compose up --build -d --wait --wait-timeout 300
 python3 scripts/validate_e2e.py
 ```
 
-This creates five orders and checks lifecycle history, distributed traces, correlated logs, and Prometheus metrics. Profiles and browser interactions require manual inspection. See [Docker validation results and runbook](docs/docker-validation.md) for prerequisites, coverage, limitations, and the recorded execution status. The current session could validate Compose and local test functions, but Docker execution was blocked by socket permissions.
+This creates five orders and checks lifecycle history, distributed traces, correlated logs, and Prometheus metrics. Profiles and browser interactions require manual inspection. See [Docker validation results and runbook](docs/docker-validation.md) for prerequisites, coverage, limitations, and the recorded execution status. The Dash0 Collector has started and accepted a pprof upload locally; full end-to-end acceptance is still pending.
 
 ## Tests
 
@@ -359,4 +459,10 @@ Remove containers and stored data for a clean reset:
 ```bash
 docker compose down -v
 ```
+
+## Publishing and security
+
+`.env`, `.env.*`, `.secrets/`, and `*.pprof` are ignored by Git; the Docker build context also excludes these files. Keep Dash0 tokens in the local `.env` file, never in screenshots or documentation. `.env.example` contains placeholders only.
+
+Compose binds published ports to `127.0.0.1` for local use. This stack includes local-only database credentials, an unauthenticated OpenSearch instance, and optional performance scenarios. Do not deploy this Compose configuration publicly. The Linux-only eBPF profiling overlay is privileged and mounts the Docker socket; use it only on a trusted Linux host.
 
